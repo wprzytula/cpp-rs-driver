@@ -121,8 +121,7 @@ CASSANDRA_NO_VALGRIND_TEST_FILTER := $(subst ${SPACE},${EMPTY},AsyncTests.Integr
 endif
 
 ifndef CCM_COMMIT_ID
-	# TODO: change it back to master/next when https://github.com/scylladb/scylla-ccm/issues/646 is fixed.
-	export CCM_COMMIT_ID := 5392dd68
+	export CCM_COMMIT_ID := master
 endif
 
 ifndef SCYLLA_VERSION
@@ -136,6 +135,7 @@ endif
 CURRENT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 BUILD_DIR := "${CURRENT_DIR}build"
 INTEGRATION_TEST_BIN := ${BUILD_DIR}/cassandra-integration-tests
+EXAMPLES_DIR := ${BUILD_DIR}/examples
 
 clean:
 	rm -rf "${BUILD_DIR}"
