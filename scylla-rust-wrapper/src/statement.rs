@@ -637,18 +637,35 @@ pub unsafe extern "C" fn cass_statement_set_serial_consistency(
     // set serial consistency if a user passed correct value and set it to
     // None otherwise.
     // I think that failing explicitly is a better idea, so I decided to return
-    // and error
-    let consistency = match get_consistency_from_cass_consistency(serial_consistency) {
-        Some(Consistency::Serial) => SerialConsistency::Serial,
-        Some(Consistency::LocalSerial) => SerialConsistency::LocalSerial,
-        _ => return CassError::CASS_ERROR_LIB_BAD_PARAMS,
+    // an error.
+    let Ok(maybe_set_serial_consistency) =
+        get_serial_consistency_from_cass_consistency(serial_consistency)
+    else {
+        return CassError::CASS_ERROR_LIB_BAD_PARAMS;
+    };
+    let serial_consistency = match maybe_set_serial_consistency {
+        MaybeUnset::Unset => {
+            // The correct semantics for `CASS_CONSISTENCY_UNKNOWN` is to
+            // make statement not have any opinion at all about serial consistency.
+            // Then, the default from the cluster/execution profile should be used.
+            // Unfortunately, the Rust Driver does not support
+            // "unsetting" serial consistency from a statement at the moment.
+            //
+            // FIXME: Implement unsetting serial consistency in the Rust Driver.
+            // Then, fix this code.
+            //
+            // For now, we will throw an error in order to warn the user
+            // about this limitation.
+            return CassError::CASS_ERROR_LIB_BAD_PARAMS;
+        }
+        MaybeUnset::Set(sc) => sc,
     };
 
     match &mut statement.statement {
-        BoundStatement::Simple(inner) => inner.query.set_serial_consistency(Some(consistency)),
+        BoundStatement::Simple(inner) => inner.query.set_serial_consistency(serial_consistency),
         BoundStatement::Prepared(inner) => Arc::make_mut(&mut inner.statement)
             .statement
-            .set_serial_consistency(Some(consistency)),
+            .set_serial_consistency(serial_consistency),
     }
 
     CassError::CASS_OK
@@ -668,6 +685,32 @@ fn get_consistency_from_cass_consistency(consistency: CassConsistency) -> Option
         CassConsistency::CASS_CONSISTENCY_LOCAL_SERIAL => Some(Consistency::LocalSerial),
         CassConsistency::CASS_CONSISTENCY_LOCAL_ONE => Some(Consistency::LocalOne),
         _ => None,
+    }
+}
+
+pub(crate) fn get_serial_consistency_from_cass_consistency(
+    consistency: CassConsistency,
+) -> Result<MaybeUnset<Option<SerialConsistency>>, ()> {
+    match consistency {
+        CassConsistency::CASS_CONSISTENCY_UNKNOWN => Ok(MaybeUnset::Unset),
+
+        CassConsistency::CASS_CONSISTENCY_ANY => {
+            // This is in line with the CPP Driver: if 0 is passed (which is Consistency::Any),
+            // then serial consistency is not set:
+            // ```c++
+            // if (callback->serial_consistency() != 0) {
+            //  flags |= CASS_QUERY_FLAG_SERIAL_CONSISTENCY;
+            // }
+            // ```
+            Ok(MaybeUnset::Set(None))
+        }
+        CassConsistency::CASS_CONSISTENCY_LOCAL_SERIAL => {
+            Ok(MaybeUnset::Set(Some(SerialConsistency::LocalSerial)))
+        }
+        CassConsistency::CASS_CONSISTENCY_SERIAL => {
+            Ok(MaybeUnset::Set(Some(SerialConsistency::Serial)))
+        }
+        _ => Err(()),
     }
 }
 

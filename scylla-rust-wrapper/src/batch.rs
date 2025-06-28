@@ -7,7 +7,9 @@ use crate::cass_types::CassConsistency;
 use crate::cass_types::{CassBatchType, make_batch_type};
 use crate::exec_profile::PerStatementExecProfile;
 use crate::retry_policy::CassRetryPolicy;
-use crate::statement::{BoundStatement, CassStatement};
+use crate::statement::{
+    BoundStatement, CassStatement, get_serial_consistency_from_cass_consistency,
+};
 use crate::types::*;
 use crate::value::CassCqlValue;
 use scylla::statement::batch::Batch;
@@ -86,13 +88,40 @@ pub unsafe extern "C" fn cass_batch_set_serial_consistency(
         return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     };
 
-    let serial_consistency = match serial_consistency.try_into().ok() {
-        Some(c) => c,
-        None => return CassError::CASS_ERROR_LIB_BAD_PARAMS,
+    // cpp-driver doesn't validate passed value in any way.
+    // If it is an incorrect serial-consistency value then it will be set
+    // and sent as-is.
+    // Before adapting the driver to Rust Driver 0.12 this code
+    // set serial consistency if a user passed correct value and set it to
+    // None otherwise.
+    // I think that failing explicitly is a better idea, so I decided to return
+    // an error.
+    let Ok(maybe_set_serial_consistency) =
+        get_serial_consistency_from_cass_consistency(serial_consistency)
+    else {
+        return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     };
+    let serial_consistency = match maybe_set_serial_consistency {
+        MaybeUnset::Unset => {
+            // The correct semantics for `CASS_CONSISTENCY_UNKNOWN` is to
+            // make batch not have any opinion at all about serial consistency.
+            // Then, the default from the cluster/execution profile should be used.
+            // Unfortunately, the Rust Driver does not support
+            // "unsetting" serial consistency from a batch at the moment.
+            //
+            // FIXME: Implement unsetting serial consistency in the Rust Driver.
+            // Then, fix this code.
+            //
+            // For now, we will throw an error in order to warn the user
+            // about this limitation.
+            return CassError::CASS_ERROR_LIB_BAD_PARAMS;
+        }
+        MaybeUnset::Set(sc) => sc,
+    };
+
     Arc::make_mut(&mut batch.state)
         .batch
-        .set_serial_consistency(Some(serial_consistency));
+        .set_serial_consistency(serial_consistency);
 
     CassError::CASS_OK
 }
