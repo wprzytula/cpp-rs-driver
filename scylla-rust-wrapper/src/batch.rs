@@ -3,8 +3,8 @@ use crate::argconv::{
     FFI, FromBox,
 };
 use crate::cass_error::CassError;
-use crate::cass_types::CassConsistency;
-use crate::cass_types::{CassBatchType, make_batch_type};
+pub use crate::cass_types::CassBatchType;
+use crate::cass_types::{CassConsistency, make_batch_type};
 use crate::exec_profile::PerStatementExecProfile;
 use crate::retry_policy::CassRetryPolicy;
 use crate::statement::{
