@@ -3,7 +3,7 @@ use crate::cass_error::CassError;
 use crate::types::*;
 use scylla::cluster::metadata::{CollectionType, NativeType};
 use scylla::frame::response::result::ColumnType;
-use scylla::frame::types::{Consistency, SerialConsistency};
+use scylla::frame::types::Consistency;
 use scylla::statement::batch::BatchType;
 use std::cell::UnsafeCell;
 use std::convert::TryFrom;
@@ -910,18 +910,6 @@ impl TryFrom<CassConsistency> for Consistency {
             CassConsistency::CASS_CONSISTENCY_LOCAL_ONE => Ok(Consistency::LocalOne),
             CassConsistency::CASS_CONSISTENCY_LOCAL_SERIAL => Ok(Consistency::LocalSerial),
             CassConsistency::CASS_CONSISTENCY_SERIAL => Ok(Consistency::Serial),
-            _ => Err(()),
-        }
-    }
-}
-
-impl TryFrom<CassConsistency> for SerialConsistency {
-    type Error = ();
-
-    fn try_from(serial: CassConsistency) -> Result<SerialConsistency, Self::Error> {
-        match serial {
-            CassConsistency::CASS_CONSISTENCY_SERIAL => Ok(SerialConsistency::Serial),
-            CassConsistency::CASS_CONSISTENCY_LOCAL_SERIAL => Ok(SerialConsistency::LocalSerial),
             _ => Err(()),
         }
     }
