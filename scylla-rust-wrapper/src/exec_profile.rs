@@ -14,6 +14,7 @@ use scylla::policies::load_balancing::LatencyAwarenessBuilder;
 use scylla::policies::retry::RetryPolicy;
 use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::statement::Consistency;
+use scylla::value::MaybeUnset;
 
 use crate::argconv::{
     ArcFFI, BoxFFI, CMut, CassBorrowedExclusivePtr, CassBorrowedSharedPtr, CassOwnedExclusivePtr,
@@ -28,7 +29,7 @@ use crate::cluster::{
 use crate::load_balancing::{LoadBalancingConfig, LoadBalancingKind};
 use crate::retry_policy::CassRetryPolicy;
 use crate::session::CassSessionInner;
-use crate::statement::CassStatement;
+use crate::statement::{CassStatement, get_serial_consistency_from_cass_consistency};
 use crate::types::{
     cass_bool_t, cass_double_t, cass_int32_t, cass_int64_t, cass_uint32_t, cass_uint64_t, size_t,
 };
@@ -698,16 +699,27 @@ pub unsafe extern "C" fn cass_execution_profile_set_serial_consistency(
         return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     };
 
-    let maybe_serial_consistency =
-        if serial_consistency == CassConsistency::CASS_CONSISTENCY_UNKNOWN {
-            None
-        } else {
-            match serial_consistency.try_into() {
-                Ok(c) => Some(c),
-                Err(_) => return CassError::CASS_ERROR_LIB_BAD_PARAMS,
-            }
-        };
-    profile_builder.modify_in_place(|builder| builder.serial_consistency(maybe_serial_consistency));
+    let Ok(maybe_unset_maybe_serial_consistency) =
+        get_serial_consistency_from_cass_consistency(serial_consistency)
+    else {
+        return CassError::CASS_ERROR_LIB_BAD_PARAMS;
+    };
+
+    match maybe_unset_maybe_serial_consistency {
+        MaybeUnset::Unset => {
+            // CASS_CONSISTENCY_UNKNOWN
+            // TODO: implement semantics of this.
+            // A workaround is needed, because Rust Driver's ExecutionProfileBuilder
+            // does not expose API to unset serial consistency (enabling semantics:
+            // "ignore me and use the default profile's setting").
+        }
+        MaybeUnset::Set(maybe_serial_consistency) => {
+            // CASS_CONSISTENCY_ANY -> None
+            // other consistency -> Some()
+            profile_builder
+                .modify_in_place(|builder| builder.serial_consistency(maybe_serial_consistency));
+        }
+    }
 
     CassError::CASS_OK
 }
