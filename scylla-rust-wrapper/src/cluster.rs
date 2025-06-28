@@ -8,6 +8,7 @@ use crate::load_balancing::{
 };
 use crate::retry_policy::CassRetryPolicy;
 use crate::ssl::CassSsl;
+use crate::statement::get_serial_consistency_from_cass_consistency;
 use crate::timestamp_generator::CassTimestampGen;
 use crate::types::*;
 use crate::uuid::CassUuid;
@@ -23,7 +24,8 @@ use scylla::policies::retry::RetryPolicy;
 use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::policies::timestamp_generator::TimestampGenerator;
 use scylla::routing::ShardAwarePortRange;
-use scylla::statement::{Consistency, SerialConsistency};
+use scylla::statement::Consistency;
+use scylla::value::MaybeUnset;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::future::Future;
@@ -1432,13 +1434,15 @@ pub unsafe extern "C" fn cass_cluster_set_serial_consistency(
         return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     };
 
-    let serial_consistency: SerialConsistency = match serial_consistency.try_into() {
-        Ok(c) => c,
-        Err(_) => return CassError::CASS_ERROR_LIB_BAD_PARAMS,
+    let Ok(MaybeUnset::Set(maybe_serial_consistency)) =
+        get_serial_consistency_from_cass_consistency(serial_consistency)
+    else {
+        // `CASS_CONSISTENCY_UNKNOWN` is forbidden here.
+        return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     };
 
     exec_profile_builder_modify(&mut cluster.default_execution_profile_builder, |builder| {
-        builder.serial_consistency(Some(serial_consistency))
+        builder.serial_consistency(maybe_serial_consistency)
     });
 
     CassError::CASS_OK
