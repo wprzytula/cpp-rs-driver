@@ -24,7 +24,7 @@ use scylla::policies::retry::RetryPolicy;
 use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::policies::timestamp_generator::TimestampGenerator;
 use scylla::routing::ShardAwarePortRange;
-use scylla::statement::Consistency;
+use scylla::statement::{Consistency, SerialConsistency};
 use scylla::value::MaybeUnset;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -41,6 +41,8 @@ use crate::cass_compression_types::CassCompressionType;
 // According to `cassandra.h` the defaults for
 // - consistency for statements is LOCAL_ONE,
 const DEFAULT_CONSISTENCY: Consistency = Consistency::LocalOne;
+// - serial consistency for statements is ANY, which corresponds to None in Rust Driver.
+const DEFAULT_SERIAL_CONSISTENCY: Option<SerialConsistency> = None;
 // - request client timeout is 12000 millis,
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_millis(12000);
 // - fetching schema metadata is true
@@ -175,6 +177,7 @@ pub(crate) fn build_session_builder(
 pub unsafe extern "C" fn cass_cluster_new() -> CassOwnedExclusivePtr<CassCluster, CMut> {
     let default_execution_profile_builder = ExecutionProfileBuilder::default()
         .consistency(DEFAULT_CONSISTENCY)
+        .serial_consistency(DEFAULT_SERIAL_CONSISTENCY)
         .request_timeout(Some(DEFAULT_REQUEST_TIMEOUT));
 
     // Default config options - according to cassandra.h
