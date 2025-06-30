@@ -334,16 +334,31 @@ pub unsafe extern "C" fn cass_statement_set_consistency(
         return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     };
 
-    let consistency_opt = get_consistency_from_cass_consistency(consistency);
-
-    if let Some(consistency) = consistency_opt {
-        match &mut statement.statement {
+    let Ok(maybe_set_consistency) = get_consistency_from_cass_consistency(consistency) else {
+        return CassError::CASS_ERROR_LIB_BAD_PARAMS;
+    };
+    match maybe_set_consistency {
+        MaybeUnset::Unset => {
+            // The correct semantics for `CASS_CONSISTENCY_UNKNOWN` is to
+            // make statement not have any opinion at all about consistency.
+            // Then, the default from the cluster/execution profile should be used.
+            // Unfortunately, the Rust Driver does not support
+            // "unsetting" consistency from a statement at the moment.
+            //
+            // FIXME: Implement unsetting consistency in the Rust Driver.
+            // Then, fix this code.
+            //
+            // For now, we will throw an error in order to warn the user
+            // about this limitation.
+            return CassError::CASS_ERROR_LIB_BAD_PARAMS;
+        }
+        MaybeUnset::Set(consistency) => match &mut statement.statement {
             BoundStatement::Simple(inner) => inner.query.set_consistency(consistency),
             BoundStatement::Prepared(inner) => Arc::make_mut(&mut inner.statement)
                 .statement
                 .set_consistency(consistency),
-        }
-    }
+        },
+    };
 
     CassError::CASS_OK
 }
@@ -671,20 +686,29 @@ pub unsafe extern "C" fn cass_statement_set_serial_consistency(
     CassError::CASS_OK
 }
 
-fn get_consistency_from_cass_consistency(consistency: CassConsistency) -> Option<Consistency> {
+pub(crate) fn get_consistency_from_cass_consistency(
+    consistency: CassConsistency,
+) -> Result<MaybeUnset<Consistency>, ()> {
     match consistency {
-        CassConsistency::CASS_CONSISTENCY_ANY => Some(Consistency::Any),
-        CassConsistency::CASS_CONSISTENCY_ONE => Some(Consistency::One),
-        CassConsistency::CASS_CONSISTENCY_TWO => Some(Consistency::Two),
-        CassConsistency::CASS_CONSISTENCY_THREE => Some(Consistency::Three),
-        CassConsistency::CASS_CONSISTENCY_QUORUM => Some(Consistency::Quorum),
-        CassConsistency::CASS_CONSISTENCY_ALL => Some(Consistency::All),
-        CassConsistency::CASS_CONSISTENCY_LOCAL_QUORUM => Some(Consistency::LocalQuorum),
-        CassConsistency::CASS_CONSISTENCY_EACH_QUORUM => Some(Consistency::EachQuorum),
-        CassConsistency::CASS_CONSISTENCY_SERIAL => Some(Consistency::Serial),
-        CassConsistency::CASS_CONSISTENCY_LOCAL_SERIAL => Some(Consistency::LocalSerial),
-        CassConsistency::CASS_CONSISTENCY_LOCAL_ONE => Some(Consistency::LocalOne),
-        _ => None,
+        CassConsistency::CASS_CONSISTENCY_ANY => Ok(MaybeUnset::Set(Consistency::Any)),
+        CassConsistency::CASS_CONSISTENCY_ONE => Ok(MaybeUnset::Set(Consistency::One)),
+        CassConsistency::CASS_CONSISTENCY_TWO => Ok(MaybeUnset::Set(Consistency::Two)),
+        CassConsistency::CASS_CONSISTENCY_THREE => Ok(MaybeUnset::Set(Consistency::Three)),
+        CassConsistency::CASS_CONSISTENCY_QUORUM => Ok(MaybeUnset::Set(Consistency::Quorum)),
+        CassConsistency::CASS_CONSISTENCY_ALL => Ok(MaybeUnset::Set(Consistency::All)),
+        CassConsistency::CASS_CONSISTENCY_LOCAL_QUORUM => {
+            Ok(MaybeUnset::Set(Consistency::LocalQuorum))
+        }
+        CassConsistency::CASS_CONSISTENCY_EACH_QUORUM => {
+            Ok(MaybeUnset::Set(Consistency::EachQuorum))
+        }
+        CassConsistency::CASS_CONSISTENCY_SERIAL => Ok(MaybeUnset::Set(Consistency::Serial)),
+        CassConsistency::CASS_CONSISTENCY_LOCAL_SERIAL => {
+            Ok(MaybeUnset::Set(Consistency::LocalSerial))
+        }
+        CassConsistency::CASS_CONSISTENCY_LOCAL_ONE => Ok(MaybeUnset::Set(Consistency::LocalOne)),
+        CassConsistency::CASS_CONSISTENCY_UNKNOWN => Ok(MaybeUnset::Unset),
+        _ => Err(()),
     }
 }
 

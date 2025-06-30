@@ -8,13 +8,13 @@ use crate::cass_types::{CassBatchType, make_batch_type};
 use crate::exec_profile::PerStatementExecProfile;
 use crate::retry_policy::CassRetryPolicy;
 use crate::statement::{
-    BoundStatement, CassStatement, get_serial_consistency_from_cass_consistency,
+    BoundStatement, CassStatement, get_consistency_from_cass_consistency,
+    get_serial_consistency_from_cass_consistency,
 };
 use crate::types::*;
 use crate::value::CassCqlValue;
 use scylla::statement::batch::Batch;
 use scylla::value::MaybeUnset;
-use std::convert::TryInto;
 use std::sync::Arc;
 
 pub struct CassBatch {
@@ -67,13 +67,30 @@ pub unsafe extern "C" fn cass_batch_set_consistency(
         return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     };
 
-    let consistency = match consistency.try_into().ok() {
-        Some(c) => c,
-        None => return CassError::CASS_ERROR_LIB_BAD_PARAMS,
+    let Ok(maybe_set_consistency) = get_consistency_from_cass_consistency(consistency) else {
+        return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     };
-    Arc::make_mut(&mut batch.state)
-        .batch
-        .set_consistency(consistency);
+    match maybe_set_consistency {
+        MaybeUnset::Unset => {
+            // The correct semantics for `CASS_CONSISTENCY_UNKNOWN` is to
+            // make statement not have any opinion at all about consistency.
+            // Then, the default from the cluster/execution profile should be used.
+            // Unfortunately, the Rust Driver does not support
+            // "unsetting" consistency from a statement at the moment.
+            //
+            // FIXME: Implement unsetting consistency in the Rust Driver.
+            // Then, fix this code.
+            //
+            // For now, we will throw an error in order to warn the user
+            // about this limitation.
+            return CassError::CASS_ERROR_LIB_BAD_PARAMS;
+        }
+        MaybeUnset::Set(consistency) => {
+            Arc::make_mut(&mut batch.state)
+                .batch
+                .set_consistency(consistency);
+        }
+    };
 
     CassError::CASS_OK
 }
