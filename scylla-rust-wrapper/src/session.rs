@@ -31,12 +31,82 @@ use std::ops::Deref;
 use std::os::raw::c_char;
 use std::sync::Arc;
 
+/// This asserts that the calling code is running inside a Tokio context,
+/// i.e., it is being executed within a Tokio runtime, by a Tokio executor thread.
+///
+/// This is useful for debugging purposes to ensure that the code is being executed
+/// in the expected environment, and should panic early in development if it is not.
+fn assert_in_tokio_context() {
+    assert!(tokio::runtime::Handle::try_current().is_ok())
+}
+
 pub(crate) struct CassConnectedSession {
     session: Session,
     exec_profile_map: HashMap<ExecProfileName, ExecutionProfileHandle>,
+    pending_requests: std::sync::atomic::AtomicUsize,
 }
 
+mod pending_requests {
+    use super::*;
+
+    /// This struct is used to prove that a request was pending.
+    /// It is dropped when the request is completed, and it asserts that
+    /// the request was made inside a Tokio context.
+    ///
+    /// This is used to ensure that the request was made in a Tokio context,
+    /// and to prevent misuse of the API.
+    #[derive(Debug)]
+    pub(super) struct PendingRequestProof;
+
+    impl Drop for PendingRequestProof {
+        fn drop(&mut self) {
+            assert_in_tokio_context();
+        }
+    }
+
+    impl CassConnectedSession {
+        pub(super) fn pend_request(&self) -> PendingRequestProof {
+            self.pending_requests
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            PendingRequestProof
+        }
+
+        pub(super) fn unpend_request(&self, _proof: PendingRequestProof) {
+            self.pending_requests
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        pub(super) fn has_pending_requests(&self) -> bool {
+            self.pending_requests
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > 0
+        }
+    }
+}
+use pending_requests::PendingRequestProof;
+
 impl CassConnectedSession {
+    fn make_request_future(
+        proof: PendingRequestProof,
+        request_fut: impl Future<Output = (Arc<Self>, CassFutureResult)> + Send + 'static,
+        #[cfg(cpp_integration_testing)] recording_listener: Option<
+            Arc<crate::integration_testing::RecordingHistoryListener>,
+        >,
+    ) -> Arc<CassFuture> {
+        let fut = async move {
+            let (connected_session, res) = request_fut.await;
+            connected_session.unpend_request(proof);
+            res
+        };
+
+        CassFuture::new_from_future(
+            fut,
+            #[cfg(cpp_integration_testing)]
+            recording_listener,
+        )
+    }
+
     pub(crate) fn resolve_exec_profile(
         &self,
         name: &ExecProfileName,
@@ -155,6 +225,7 @@ impl CassConnectedSession {
             Some(Arc::new(CassConnectedSession {
                 session,
                 exec_profile_map,
+                pending_requests: 0.into(),
             })),
         );
         if prev.is_some() {
@@ -287,34 +358,41 @@ pub unsafe extern "C" fn cass_session_execute_batch(
         )));
     };
 
+    let pending_request_proof = cass_connected_session.pend_request();
     let future = async move {
-        let session = &cass_connected_session.session;
+        let res = async {
+            let session = &cass_connected_session.session;
 
-        let handle = cass_connected_session
-            .get_or_resolve_profile_handle(batch_exec_profile.as_ref())
-            .await?;
+            let handle = cass_connected_session
+                .get_or_resolve_profile_handle(batch_exec_profile.as_ref())
+                .await?;
 
-        Arc::make_mut(&mut state)
-            .batch
-            .set_execution_profile_handle(handle);
+            Arc::make_mut(&mut state)
+                .batch
+                .set_execution_profile_handle(handle);
 
-        let query_res = session.batch(&state.batch, &state.bound_values).await;
-        match query_res {
-            Ok(result) => Ok(CassResultValue::QueryResult(Arc::new(CassResult {
-                tracing_id: None,
-                paging_state_response: PagingStateResponse::NoMorePages,
-                kind: CassResultKind::NonRows,
-                coordinator: Some(result.request_coordinator().clone()),
-            }))),
-            Err(err) => Ok(CassResultValue::QueryError(Arc::new(err.into()))),
+            let query_res = session.batch(&state.batch, &state.bound_values).await;
+            match query_res {
+                Ok(result) => Ok(CassResultValue::QueryResult(Arc::new(CassResult {
+                    tracing_id: None,
+                    paging_state_response: PagingStateResponse::NoMorePages,
+                    kind: CassResultKind::NonRows,
+                    coordinator: Some(result.request_coordinator().clone()),
+                }))),
+                Err(err) => Ok(CassResultValue::QueryError(Arc::new(err.into()))),
+            }
         }
+        .await;
+        (cass_connected_session, res)
     };
 
-    CassFuture::make_raw(
+    CassConnectedSession::make_request_future(
+        pending_request_proof,
         future,
         #[cfg(cpp_integration_testing)]
-        None,
+        recording_listener,
     )
+    .into_raw()
 }
 
 #[unsafe(no_mangle)]
@@ -335,6 +413,7 @@ pub unsafe extern "C" fn cass_session_execute(
 
     let paging_state = statement_opt.paging_state.clone();
     let paging_enabled = statement_opt.paging_enabled;
+
     let mut statement = statement_opt.statement.clone();
 
     let session_opt = cass_session.connected.load_full();
@@ -370,112 +449,121 @@ pub unsafe extern "C" fn cass_session_execute(
     #[allow(unused, clippy::let_unit_value)]
     let statement_opt = (); // Hardening shadow to avoid use-after-free.
 
+    let pending_request_proof = cass_connected_session.pend_request();
+
     let future = async move {
-        let session = &cass_connected_session.session;
+        let res = async {
+            let session = &cass_connected_session.session;
 
-        let handle = cass_connected_session
-            .get_or_resolve_profile_handle(statement_exec_profile.as_ref())
-            .await?;
+            let handle = cass_connected_session
+                .get_or_resolve_profile_handle(statement_exec_profile.as_ref())
+                .await?;
 
-        match &mut statement {
-            BoundStatement::Simple(query) => query.query.set_execution_profile_handle(handle),
-            BoundStatement::Prepared(prepared) => Arc::make_mut(&mut prepared.statement)
-                .statement
-                .set_execution_profile_handle(handle),
-        }
+            match &mut statement {
+                BoundStatement::Simple(query) => query.query.set_execution_profile_handle(handle),
+                BoundStatement::Prepared(prepared) => Arc::make_mut(&mut prepared.statement)
+                    .statement
+                    .set_execution_profile_handle(handle),
+            }
 
-        // Creating a type alias here to fix clippy lints.
-        // I want this type to be explicit, so future developers can understand
-        // what's going on here (and why we include some weird Option of data types).
-        type QueryRes = Result<
-            (
-                QueryResult,
-                PagingStateResponse,
-                // We unfortunately have to retrieve the metadata here.
-                // Since `query.query` is consumed, we cannot match the statement
-                // after execution, to retrieve the cached metadata in case
-                // of prepared statements.
-                Option<Arc<CassResultMetadata>>,
-            ),
-            ExecutionError,
-        >;
-        let query_res: QueryRes = match statement {
-            BoundStatement::Simple(query) => {
-                // We don't store result metadata for Queries - return None.
-                let maybe_result_metadata = None;
+            // Creating a type alias here to fix clippy lints.
+            // I want this type to be explicit, so future developers can understand
+            // what's going on here (and why we include some weird Option of data types).
+            type QueryRes = Result<
+                (
+                    QueryResult,
+                    PagingStateResponse,
+                    // We unfortunately have to retrieve the metadata here.
+                    // Since `query.query` is consumed, we cannot match the statement
+                    // after execution, to retrieve the cached metadata in case
+                    // of prepared statements.
+                    Option<Arc<CassResultMetadata>>,
+                ),
+                ExecutionError,
+            >;
+            let query_res: QueryRes = match statement {
+                BoundStatement::Simple(query) => {
+                    // We don't store result metadata for Queries - return None.
+                    let maybe_result_metadata = None;
 
-                let bound_values = SimpleQueryRowSerializer {
-                    bound_values: query.bound_values,
-                    name_to_bound_index: query.name_to_bound_index,
-                };
+                    let bound_values = SimpleQueryRowSerializer {
+                        bound_values: query.bound_values,
+                        name_to_bound_index: query.name_to_bound_index,
+                    };
 
-                if paging_enabled {
-                    session
-                        .query_single_page(query.query, bound_values, paging_state)
-                        .await
-                        .map(|(qr, psr)| (qr, psr, maybe_result_metadata))
-                } else {
-                    session
-                        .query_unpaged(query.query, bound_values)
-                        .await
-                        .map(|result| {
-                            (
-                                result,
-                                PagingStateResponse::NoMorePages,
-                                maybe_result_metadata,
+                    if paging_enabled {
+                        session
+                            .query_single_page(query.query, bound_values, paging_state)
+                            .await
+                            .map(|(qr, psr)| (qr, psr, maybe_result_metadata))
+                    } else {
+                        session
+                            .query_unpaged(query.query, bound_values)
+                            .await
+                            .map(|result| {
+                                (
+                                    result,
+                                    PagingStateResponse::NoMorePages,
+                                    maybe_result_metadata,
+                                )
+                            })
+                    }
+                }
+                BoundStatement::Prepared(prepared) => {
+                    // Clone result metadata, so we don't need to construct it from scratch in
+                    // `CassResultMetadata::from_column_specs` - it requires a lot of allocations for complex types.
+                    let maybe_result_metadata =
+                        Some(Arc::clone(&prepared.statement.result_metadata));
+
+                    if paging_enabled {
+                        session
+                            .execute_single_page(
+                                &prepared.statement.statement,
+                                prepared.bound_values,
+                                paging_state,
                             )
-                        })
+                            .await
+                            .map(|(qr, psr)| (qr, psr, maybe_result_metadata))
+                    } else {
+                        session
+                            .execute_unpaged(&prepared.statement.statement, prepared.bound_values)
+                            .await
+                            .map(|result| {
+                                (
+                                    result,
+                                    PagingStateResponse::NoMorePages,
+                                    maybe_result_metadata,
+                                )
+                            })
+                    }
                 }
-            }
-            BoundStatement::Prepared(prepared) => {
-                // Clone result metadata, so we don't need to construct it from scratch in
-                // `CassResultMetadata::from_column_specs` - it requires a lot of allocations for complex types.
-                let maybe_result_metadata = Some(Arc::clone(&prepared.statement.result_metadata));
+            };
 
-                if paging_enabled {
-                    session
-                        .execute_single_page(
-                            &prepared.statement.statement,
-                            prepared.bound_values,
-                            paging_state,
-                        )
-                        .await
-                        .map(|(qr, psr)| (qr, psr, maybe_result_metadata))
-                } else {
-                    session
-                        .execute_unpaged(&prepared.statement.statement, prepared.bound_values)
-                        .await
-                        .map(|result| {
-                            (
-                                result,
-                                PagingStateResponse::NoMorePages,
-                                maybe_result_metadata,
-                            )
-                        })
+            match query_res {
+                Ok((result, paging_state_response, maybe_result_metadata)) => {
+                    match CassResult::from_result_payload(
+                        result,
+                        paging_state_response,
+                        maybe_result_metadata,
+                    ) {
+                        Ok(result) => Ok(CassResultValue::QueryResult(Arc::new(result))),
+                        Err(e) => Ok(CassResultValue::QueryError(e)),
+                    }
                 }
+                Err(err) => Ok(CassResultValue::QueryError(Arc::new(err.into()))),
             }
-        };
-
-        match query_res {
-            Ok((result, paging_state_response, maybe_result_metadata)) => {
-                match CassResult::from_result_payload(
-                    result,
-                    paging_state_response,
-                    maybe_result_metadata,
-                ) {
-                    Ok(result) => Ok(CassResultValue::QueryResult(Arc::new(result))),
-                    Err(e) => Ok(CassResultValue::QueryError(e)),
-                }
-            }
-            Err(err) => Ok(CassResultValue::QueryError(Arc::new(err.into()))),
         }
+        .await;
+        (cass_connected_session, res)
     };
 
-    CassFuture::make_raw(
+    CassConnectedSession::make_request_future(
+        pending_request_proof,
         future,
         #[cfg(cpp_integration_testing)]
         recording_listener,
     )
+    .into_raw()
 }
 
 #[unsafe(no_mangle)]
@@ -501,9 +589,10 @@ pub unsafe extern "C" fn cass_session_prepare_from_existing(
             "Session is not connected".msg(),
         )));
     };
+    let pending_request_proof = connected_session.pend_request();
 
-    CassFuture::make_raw(
-        async move {
+    let fut = async move {
+        let res = async {
             let query = match &statement {
                 BoundStatement::Simple(q) => q,
                 BoundStatement::Prepared(ps) => {
@@ -520,10 +609,18 @@ pub unsafe extern "C" fn cass_session_prepare_from_existing(
             Ok(CassResultValue::Prepared(Arc::new(
                 CassPrepared::new_from_prepared_statement(prepared),
             )))
-        },
+        }
+        .await;
+        (connected_session, res)
+    };
+
+    CassConnectedSession::make_request_future(
+        pending_request_proof,
+        fut,
         #[cfg(cpp_integration_testing)]
         None,
     )
+    .into_raw()
 }
 
 #[unsafe(no_mangle)]
@@ -560,24 +657,31 @@ pub unsafe extern "C" fn cass_session_prepare_n(
             "Session is not connected".msg(),
         )));
     };
+    let pending_request_proof = connected_session.pend_request();
 
     let fut = async move {
-        let prepared = connected_session
-            .session
-            .prepare(query)
-            .await
-            .map_err(|err| (err.to_cass_error(), err.msg()))?;
+        let res = async {
+            let prepared = connected_session
+                .session
+                .prepare(query)
+                .await
+                .map_err(|err| (err.to_cass_error(), err.msg()))?;
 
-        Ok(CassResultValue::Prepared(Arc::new(
-            CassPrepared::new_from_prepared_statement(prepared),
-        )))
+            Ok::<_, (CassError, String)>(CassResultValue::Prepared(Arc::new(
+                CassPrepared::new_from_prepared_statement(prepared),
+            )))
+        }
+        .await;
+        (connected_session, res)
     };
 
-    CassFuture::make_raw(
+    CassConnectedSession::make_request_future(
+        pending_request_proof,
         fut,
         #[cfg(cpp_integration_testing)]
         None,
     )
+    .into_raw()
 }
 
 #[unsafe(no_mangle)]
