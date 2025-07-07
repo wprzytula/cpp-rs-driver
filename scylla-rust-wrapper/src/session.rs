@@ -30,6 +30,8 @@ use std::future::Future;
 use std::ops::Deref;
 use std::os::raw::c_char;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use tokio::sync::Notify;
 
 /// This asserts that the calling code is running inside a Tokio context,
 /// i.e., it is being executed within a Tokio runtime, by a Tokio executor thread.
@@ -44,17 +46,33 @@ pub(crate) struct CassConnectedSession {
     session: Session,
     exec_profile_map: HashMap<ExecProfileName, ExecutionProfileHandle>,
     pending_requests: std::sync::atomic::AtomicUsize,
+    // This is used to notify the closing future when all requests are finished.
+    // This is a `OnceLock`, because it's only set once, when the session closing is initiated.
+    // Since then, if any request notices that it is the last one, it will notify this,
+    // allowing the closing future to resolve.
+    //
+    // FIXME: The following is not a problem. TODO: remove.
+    // Care must be taken to initialize this lock before the Session is made unavailable
+    // (by replacing CassConnectedSession with None in `connected` field of CassSession),
+    // because otherwise the following race may occur:
+    // 1. Session is made unavailable, and the closing future is started.
+    // 2. A request is made, and it notices that it is the last one.
+    //    It does not notify the `requests_finished_notify`, because it is not initialized yet.
+    // 3. NEVER MIND, it's not an issue.
+    requests_finished_notify: OnceLock<Notify>,
 }
 
 mod pending_requests {
     use super::*;
 
-    /// This struct is used to prove that a request was pending.
+    // I'm not good enough in memory orderings to say if this is really needed
+    // (although I think it is, because different threads may read, increment, and decrement
+    // this field), so let's be safe and use the strongest possible.
+    const ORDERING: std::sync::atomic::Ordering = std::sync::atomic::Ordering::SeqCst;
+
+    /// This struct is used to prove that a request was pended.
     /// It is dropped when the request is completed, and it asserts that
-    /// the request was made inside a Tokio context.
-    ///
-    /// This is used to ensure that the request was made in a Tokio context,
-    /// and to prevent misuse of the API.
+    /// it's dropped in a Tokio context.
     #[derive(Debug)]
     pub(super) struct PendingRequestProof;
 
@@ -65,22 +83,43 @@ mod pending_requests {
     }
 
     impl CassConnectedSession {
+        // This returns a proof that the request was pending.
+        // Unfortunately, it itself does not guarantee that the request
+        // will ever be unpended. For this to be ensured, the function
+        // `CassConnectedSession::make_request_future` is designed to be used,
+        // which will call `unpend_request` when the request is completed.
         pub(super) fn pend_request(&self) -> PendingRequestProof {
-            self.pending_requests
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.pending_requests.fetch_add(1, ORDERING);
 
             PendingRequestProof
         }
 
+        // This requires a proof that the request was pending,
+        // not to allow unpending requests that were not made.
         pub(super) fn unpend_request(&self, _proof: PendingRequestProof) {
-            self.pending_requests
-                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            let pending_requests = self
+                .pending_requests
+                .fetch_sub(1, ORDERING)
+                .checked_sub(1)
+                .expect("BUG: more requests unpended that had been pended!");
+
+            if pending_requests == 0 {
+                // If there are no pending requests, notify the closing future.
+                if let Some(notify) = self.requests_finished_notify.get() {
+                    notify.notify_one();
+                } else {
+                    // No need to do anything if the notify is not set, because it means that either:
+                    // 1. the session is not being closed, or
+                    // 2. the session is already closed, but the notify was not set yet.
+                    //
+                    // In both cases, the closing future, at the point when no new requests are accepted,
+                    // will check `has_pending_requests()` and return immediately if there are no pending requests.
+                }
+            }
         }
 
         pub(super) fn has_pending_requests(&self) -> bool {
-            self.pending_requests
-                .load(std::sync::atomic::Ordering::Relaxed)
-                > 0
+            self.pending_requests.load(ORDERING) > 0
         }
     }
 }
@@ -226,6 +265,7 @@ impl CassConnectedSession {
                 session,
                 exec_profile_map,
                 pending_requests: 0.into(),
+                requests_finished_notify: OnceLock::new(),
             })),
         );
         if prev.is_some() {
@@ -237,6 +277,7 @@ impl CassConnectedSession {
 
     fn close_fut(cass_session: &CassSession) -> Arc<CassFuture> {
         let prev = cass_session.connected.swap(None);
+        // Since now, no new requests will be accepted.
 
         let Some(cass_session_connected) = prev else {
             return CassFuture::new_ready(Err((
@@ -245,8 +286,28 @@ impl CassConnectedSession {
             )));
         };
 
+        // We start by setting the Notify, so that we won't lose a wakeup
+        // if the last request finishes before we set it.
+        cass_session_connected
+            .requests_finished_notify
+            .set(Notify::new())
+            .expect(
+                "The swap guarantees that only one thread takes the connected session. \
+                And this should never be an issue IRL, because session should be closed \
+                from a single thread, only once",
+            );
+
         let fut = async move {
-            // TODO: add waiting for the pending requests to finish.
+            while cass_session_connected.has_pending_requests() {
+                // Wait for all pending requests to finish.
+                // This will block until the last request finishes and calls `requests_finished_notify.notify_one()`.
+                cass_session_connected
+                    .requests_finished_notify
+                    .get()
+                    .expect("We have initialized the OnceLock prior")
+                    .notified()
+                    .await;
+            }
 
             Ok(CassResultValue::Empty)
         };
@@ -390,7 +451,7 @@ pub unsafe extern "C" fn cass_session_execute_batch(
         pending_request_proof,
         future,
         #[cfg(cpp_integration_testing)]
-        recording_listener,
+        None,
     )
     .into_raw()
 }
@@ -692,7 +753,12 @@ pub unsafe extern "C" fn cass_session_free(session_raw: CassOwnedSharedPtr<CassS
     };
 
     let close_fut = CassConnectedSession::close_fut(&session_opt);
-    close_fut.with_waited_result(|_| ());
+    close_fut.with_waited_result(|_| {
+        // The future may return an error, but we don't care about it here,
+        // because we are just cleaning up the session.
+        // If the future returned, no matter if it was successful or not,
+        // the session is now closed, and we can safely drop it.
+    });
 
     // The CassSession's Arc is dropped here with the end of the scope.
 }
