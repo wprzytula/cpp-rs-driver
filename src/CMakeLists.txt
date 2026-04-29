@@ -8,29 +8,6 @@ include(CheckCXXSourceCompiles)
 add_subdirectory(third_party/sparsehash)
 
 #------------------------------
-# Compiler flags
-#------------------------------
-
-# Ensure Windows platform is supported
-if(WIN32)
-  if(CMAKE_SYSTEM_VERSION GREATER 5.2 OR
-      CMAKE_SYSTEM_VERSION EQUAL 5.2)
-    add_definitions(-D_WIN32_WINNT=0x502)
-  else()
-    string(REPLACE "." "" WINDOWS_VERSION ${CMAKE_SYSTEM_VERSION})
-    string(REGEX REPLACE "([0-9])" "0\\1" WINDOWS_VERSION ${WINDOWS_VERSION})
-    message(FATAL_ERROR "Unable to build driver: Unsupported Windows platform 0x${WINDOWS_VERSION}")
-  endif()
-endif()
-
-if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wconversion -Wno-sign-conversion -Wno-shorten-64-to-32 -Wno-undefined-var-template -Werror")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-implicit-int-float-conversion")
-elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU") # To many superfluous warnings generated with GCC when using -Wconversion (see: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=40752)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
-endif()
-
-#------------------------------
 # Build configured header
 #------------------------------
 
