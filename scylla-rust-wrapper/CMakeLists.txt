@@ -1,7 +1,11 @@
+# This file builds the scylla-cpp-driver shared and static libraries by invoking
+# cargo_build() (defined in cmake/CMakeCargo.cmake), then copies/symlinks the
+# resulting artifacts to canonical names and sets up installation rules.
+
 list(APPEND INCLUDE_DIRS ${CASS_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 #------------------------------
-# Targets
+# Utility macros
 #------------------------------
 
 macro(create_symlink source_file symlink_name)
@@ -21,6 +25,10 @@ macro(create_copy source_file dest_name)
   add_custom_target(${dest_name}_copy ALL DEPENDS ${CMAKE_BINARY_DIR}/${dest_name})
 endmacro()
 
+#------------------------------
+# Rust flags
+#------------------------------
+
 if(DEFINED CMAKE_Rust_FLAGS)
   set(CMAKE_Rust_FLAGS "${CMAKE_Rust_FLAGS} --cfg scylla_unstable")
 else()
@@ -30,6 +38,10 @@ endif()
 if(CASS_BUILD_INTEGRATION_TESTS OR CASS_BUILD_EXAMPLES)
   set(CMAKE_Rust_FLAGS "${CMAKE_Rust_FLAGS} --cfg cpp_integration_testing")
 endif()
+
+#------------------------------
+# Library output names
+#------------------------------
 
 if(APPLE)
   set(INSTALL_NAME_SHARED "libscylla-cpp-driver.${PROJECT_VERSION_STRING}.dylib")
@@ -56,6 +68,11 @@ if(DEFINED CMAKE_Rust_FLAGS)
 else()
   set(CMAKE_Rust_FLAGS "${CMAKE_Rust_FLAGS_SONAME}")
 endif()
+
+#------------------------------
+# Cargo builds
+#------------------------------
+
 if(CASS_BUILD_SHARED)
   cargo_build(NAME scylla_cpp_driver CRATE_TYPE cdylib)
   create_copy($<TARGET_FILE:scylla_cpp_driver_cdylib> ${INSTALL_NAME_SHARED})
