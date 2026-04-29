@@ -63,11 +63,7 @@ if(WIN32)
 else()
   set(INSTALL_NAME_STATIC "libscylla-cpp-driver_static.a")
 endif()
-if(DEFINED CMAKE_Rust_FLAGS)
-  set(CMAKE_Rust_FLAGS "${CMAKE_Rust_FLAGS} ${CMAKE_Rust_FLAGS_SONAME}")
-else()
-  set(CMAKE_Rust_FLAGS "${CMAKE_Rust_FLAGS_SONAME}")
-endif()
+set(CMAKE_Rust_FLAGS "${CMAKE_Rust_FLAGS} ${CMAKE_Rust_FLAGS_SONAME}")
 
 #------------------------------
 # Cargo builds
