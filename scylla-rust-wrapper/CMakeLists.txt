@@ -99,26 +99,7 @@ endif()
 # Installation
 #-------------------------------------
 
-# Determine if the library directory needs to be determined
-if(NOT DEFINED CMAKE_INSTALL_LIBDIR)
-  if ("${CMAKE_SYSTEM_NAME}" MATCHES "Linux" AND ("${CMAKE_INSTALL_PREFIX}" STREQUAL "/usr" OR
-    "${CMAKE_INSTALL_PREFIX}" STREQUAL "/usr/local"))
-    if(EXISTS "/etc/debian_version")
-      set (CMAKE_INSTALL_LIBDIR "lib/${CMAKE_LIBRARY_ARCHITECTURE}")
-    elseif(EXISTS "/etc/redhat-release" OR EXISTS "/etc/fedora-release" OR
-        EXISTS "/etc/slackware-version" OR EXISTS "/etc/gentoo-release")
-      if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set (CMAKE_INSTALL_LIBDIR "lib64")
-      else()
-        set (CMAKE_INSTALL_LIBDIR "lib")
-      endif()
-    else()
-      set (CMAKE_INSTALL_LIBDIR "lib")
-    endif()
-  else()
-    set (CMAKE_INSTALL_LIBDIR "lib")
-  endif()
-endif()
+include(GNUInstallDirs)
 
 # Create a binary directory executable and DLLs (windows only)
 set(INSTALL_DLL_EXE_DIR "bin") # Determine the header install dir
