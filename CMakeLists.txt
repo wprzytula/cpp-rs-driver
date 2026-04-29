@@ -61,7 +61,6 @@ option(CASS_MULTICORE_COMPILATION "Enable multicore compilation" ON)
 option(CASS_USE_LIBSSH2 "Use libssh2 for integration tests" OFF)
 option(CASS_USE_OPENSSL "Use OpenSSL" ON)
 option(CASS_USE_STATIC_LIBS "Link static libraries when building executables" OFF)
-option(CASS_USE_TIMERFD "Use timerfd (Linux only)" ON)
 option(CASS_USE_LIBUV "Use libuv" OFF)
 
 set(CASS_CPP_STANDARD "11" CACHE STRING "C++ standard (11, 14, 17, etc.)")
