@@ -101,8 +101,6 @@ endif()
 
 include(GNUInstallDirs)
 
-# Create a binary directory executable and DLLs (windows only)
-set(INSTALL_DLL_EXE_DIR "bin") # Determine the header install dir
 if (CASS_INSTALL_HEADER_IN_SUBDIR)
   if (CASS_INSTALL_HEADER_SUBDIR_NAME)
     # User-specified include sub-dir
@@ -141,7 +139,7 @@ if(CASS_BUILD_SHARED)
   # Versioned shared library goes to runtime package
   if(WIN32)
     install(FILES ${CMAKE_BINARY_DIR}/${INSTALL_NAME_SHARED}
-      DESTINATION ${INSTALL_DLL_EXE_DIR}
+      DESTINATION ${CMAKE_INSTALL_BINDIR}
       COMPONENT ${SCYLLA_DRIVER_RUNTIME_COMPONENT_NAME}
       PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_EXECUTE GROUP_READ WORLD_EXECUTE WORLD_READ)
     if(INSTALL_NAME_SHARED_IMPLIB)
