@@ -1,12 +1,12 @@
-# add_subdirectory(third_party/curl)
-# add_subdirectory(third_party/hdr_histogram)
-# add_subdirectory(third_party/http-parser)
-# add_subdirectory(third_party/minizip)
-add_subdirectory(third_party/sparsehash)
+# This directory contains C++ utility code inherited from the legacy DataStax
+# driver. The Rust driver does not use it; only integration tests compile a
+# subset of these sources directly (see tests/CMakeLists.txt).
+#
+# This CMakeLists.txt:
+#  1. Builds the sparsehash headers (provides HASH_NAMESPACE)
+#  2. Generates driver_config.hpp (included transitively by test code)
 
-#------------------------------
-# Build configured header
-#------------------------------
+add_subdirectory(third_party/sparsehash)
 
 # Determine if hash is in the tr1 namespace (used by string.hpp, address.hpp)
 string(REPLACE "::" ";" HASH_NAMESPACE_LIST ${HASH_NAMESPACE})
