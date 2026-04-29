@@ -1,49 +1,11 @@
 include(CheckSymbolExists)
 include(CheckCXXSourceCompiles)
 
-file(GLOB SOURCES *.cpp *.hpp)
-
-if(APPLE)
-  list(REMOVE_ITEM SOURCES ${CASS_SRC_DIR}/get_time-unix.cpp ${CASS_SRC_DIR}/get_time-win.cpp)
-elseif(UNIX)
-  list(REMOVE_ITEM SOURCES ${CASS_SRC_DIR}/get_time-mac.cpp ${CASS_SRC_DIR}/get_time-win.cpp)
-elseif(WIN32)
-  list(REMOVE_ITEM SOURCES ${CASS_SRC_DIR}/get_time-mac.cpp ${CASS_SRC_DIR}/get_time-unix.cpp)
-endif()
-
-if(CASS_USE_OPENSSL)
-  list(APPEND SOURCES ssl/ssl_openssl_impl.cpp ssl/ring_buffer_bio.cpp)
-else()
-  list(APPEND SOURCES ssl/ssl_no_impl.cpp)
-endif()
-
-list(APPEND SOURCES atomic/atomic_std.hpp)
-
-# Determine `optional` library to include
-if(CMAKE_CXX_STANDARD LESS 17)
-  message(STATUS "Using akrzemi's `optional` implementation")
-  list(APPEND SOURCES optional/optional_akrzemi.hpp)
-else()
-  message(STATUS "Using std::optional library")
-  list(APPEND SOURCES optional/optional_std.hpp)
-endif()
-
 # add_subdirectory(third_party/curl)
 # add_subdirectory(third_party/hdr_histogram)
 # add_subdirectory(third_party/http-parser)
 # add_subdirectory(third_party/minizip)
 add_subdirectory(third_party/sparsehash)
-
-list(APPEND INCLUDE_DIRS 
-  third_party/curl
-  third_party/hdr_histogram
-  third_party/http-parser
-  third_party/minizip
-  third_party/mt19937_64
-  third_party/rapidjson/rapidjson
-  third_party/sparsehash/src)
-
-list(APPEND INCLUDE_DIRS ${CASS_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 #------------------------------
 # Compiler flags
