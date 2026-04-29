@@ -11,6 +11,7 @@ list(APPEND INCLUDE_DIRS ${CASS_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 macro(create_symlink source_file symlink_name)
   add_custom_command(
     OUTPUT ${CMAKE_BINARY_DIR}/${symlink_name}
+    DEPENDS ${CMAKE_BINARY_DIR}/${source_file}
     COMMAND ${CMAKE_COMMAND} -E create_symlink ${source_file} ${CMAKE_BINARY_DIR}/${symlink_name}
   )
   add_custom_target(${symlink_name}_symlink ALL DEPENDS ${CMAKE_BINARY_DIR}/${symlink_name})
