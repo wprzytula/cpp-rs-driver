@@ -58,11 +58,9 @@ option(CASS_INSTALL_HEADER "Install header file" ON)
 option(CASS_INSTALL_HEADER_IN_SUBDIR "Install header file under 'include/cassandra'" OFF)
 option(CASS_INSTALL_PKG_CONFIG "Install pkg-config file(s)" ON)
 option(CASS_MULTICORE_COMPILATION "Enable multicore compilation" ON)
-option(CASS_USE_BOOST_ATOMIC "Use Boost atomics library" OFF)
 option(CASS_USE_LIBSSH2 "Use libssh2 for integration tests" OFF)
 option(CASS_USE_OPENSSL "Use OpenSSL" ON)
 option(CASS_USE_STATIC_LIBS "Link static libraries when building executables" OFF)
-option(CASS_USE_STD_ATOMIC "Use std::atomic library" ON)
 option(CASS_USE_TIMERFD "Use timerfd (Linux only)" ON)
 option(CASS_USE_LIBUV "Use libuv" OFF)
 
@@ -160,43 +158,6 @@ if(NOT PROJECT_VERSION_SUFFIX STREQUAL "")
 endif()
 
 message(STATUS "Driver version: ${PROJECT_VERSION_STRING}")
-
-#------------------------
-# Determine atomic implementation
-#------------------------
-
-# Determine if std::atomic can be used for GCC, Clang, or MSVC
-if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-  if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX)
-    # Version determined from: https://gcc.gnu.org/wiki/Atomic/GCCMM
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "4.7" OR
-        CMAKE_CXX_COMPILER_VERSION VERSION_GREATER "4.7")
-      set(CASS_USE_STD_ATOMIC ON)
-    endif()
-  endif()
-elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR 
-       "${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
-  # Version determined from: http://clang.llvm.org/cxx_status.html
-  # 3.2 includes the full C++11 memory model, but 3.1 had atomic
-  # support.
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "3.1" OR
-      CMAKE_CXX_COMPILER_VERSION VERSION_GREATER "3.1")
-    set(CASS_USE_STD_ATOMIC ON)
-  endif()
-elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
-  # Version determined from https://msdn.microsoft.com/en-us/library/hh874894
-  # VS2012+/VS 11.0+/WindowsSDK v8.0+
-  if(MSVC_VERSION GREATER 1700 OR
-      MSVC_VERSION EQUAL 1700)
-    set(CASS_USE_STD_ATOMIC ON)
-  endif()
-endif()
-
-if(CASS_USE_BOOST_ATOMIC)
-  message(STATUS "Using boost::atomic implementation for atomic operations")
-elseif(CASS_USE_STD_ATOMIC)
-  message(STATUS "Using std::atomic implementation for atomic operations")
-endif()
 
 #------------------------
 # Top-level compiler flags

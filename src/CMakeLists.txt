@@ -17,19 +17,7 @@ else()
   list(APPEND SOURCES ssl/ssl_no_impl.cpp)
 endif()
 
-# Determine atomic library to include
-if(CASS_USE_BOOST_ATOMIC)
-  list(APPEND SOURCES atomic/atomic_boost.hpp)
-elseif(CASS_USE_STD_ATOMIC)
-  list(APPEND SOURCES atomic/atomic_std.hpp)
-else()
-  list(APPEND SOURCES atomic/atomic_intrinsics.hpp)
-  if(WIN32)
-    list(APPEND SOURCES atomic/atomic_intrinsics_msvc.hpp)
-  else()
-    list(APPEND SOURCES atomic/atomic_intrinsics_gcc.hpp)
-  endif()
-endif()
+list(APPEND SOURCES atomic/atomic_std.hpp)
 
 # Determine `optional` library to include
 if(CMAKE_CXX_STANDARD LESS 17)
@@ -115,8 +103,7 @@ if(NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   check_cxx_source_compiles("int main() { return __builtin_bswap64(42); }" HAVE_BUILTIN_BSWAP64)
 endif()
 
-set(HAVE_BOOST_ATOMIC ${CASS_USE_BOOST_ATOMIC})
-set(HAVE_STD_ATOMIC ${CASS_USE_STD_ATOMIC})
+set(HAVE_STD_ATOMIC ON)
 set(HAVE_OPENSSL ${CASS_USE_OPENSSL})
 
 # Generate the driver_config.hpp file

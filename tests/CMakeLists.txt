@@ -106,10 +106,7 @@ set(CPP_DRIVER_HEADER_SOURCE_FILES ${CASS_SRC_DIR}/atomic.hpp
   ${CASS_SRC_DIR}/scoped_lock.hpp
   ${CASS_SRC_DIR}/scoped_ptr.hpp
   ${CASS_SRC_DIR}/utils.hpp)
-set(CPP_DRIVER_HEADER_SOURCE_ATOMIC_FILES ${CASS_SRC_DIR}/atomic/atomic_boost.hpp
-  ${CASS_SRC_DIR}/atomic/atomic_intrinsics.hpp
-  ${CASS_SRC_DIR}/atomic/atomic_intrinsics_gcc.hpp
-  ${CASS_SRC_DIR}/atomic/atomic_intrinsics_msvc.hpp)
+set(CPP_DRIVER_HEADER_SOURCE_ATOMIC_FILES ${CASS_SRC_DIR}/atomic/atomic_std.hpp)
 set(CPP_DRIVER_SOURCE_FILES
     ${CASS_SRC_DIR}/utils.cpp
     ${CASS_SRC_DIR}/driver_info.cpp
