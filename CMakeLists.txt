@@ -54,7 +54,6 @@ option(CASS_BUILD_SHARED "Build shared library" ON)
 option(CASS_BUILD_STATIC "Build static library" ON)
 option(CASS_BUILD_TESTS "Build tests" OFF)
 option(CASS_BUILD_UNIT_TESTS "Build unit tests" OFF)
-option(CASS_DEBUG_CUSTOM_ALLOC "Debug custom allocator" OFF)
 option(CASS_INSTALL_HEADER "Install header file" ON)
 option(CASS_INSTALL_HEADER_IN_SUBDIR "Install header file under 'include/cassandra'" OFF)
 option(CASS_INSTALL_PKG_CONFIG "Install pkg-config file(s)" ON)
@@ -116,10 +115,6 @@ endif()
 # Ensure the driver is configured to build
 if(NOT CASS_BUILD_SHARED AND NOT CASS_BUILD_STATIC)
   message(FATAL_ERROR "Driver is not Configured to Build: Ensure shared and/or static library is enabled")
-endif()
-
-if(CASS_DEBUG_CUSTOM_ALLOC AND CASS_USE_STATIC_LIBS)
-  message(WARNING "Debugging the custom allocator while static linking the library can cause your application to fail")
 endif()
 
 #------------------------
