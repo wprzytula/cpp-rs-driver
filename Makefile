@@ -319,11 +319,16 @@ verify-openssl-3.0-compat:
 		"$(OPENSSL_3_0_LIBSSL_DEV_PATH)" /tmp/openssl-3.0-compat-link-test
 
 STATIC_BUILD_DIR := $(CURRENT_DIR)build-static
-
-build-static-integration-test-bin:
+STATIC_BUILD_CMAKE_FLAGS := -DCASS_BUILD_INTEGRATION_TESTS=ON -DCASS_USE_STATIC_LIBS=ON -DCMAKE_BUILD_TYPE=Release
+STATIC_INTEGRATION_TEST_TARGET := cassandra-integration-tests
 ifeq ($(OS_TYPE),windows)
-	$(MAKE) .package-build-prepare-windows
-	cmake -S . -B build-static -G "Visual Studio 17 2022" -A x64 -DCASS_BUILD_INTEGRATION_TESTS=ON -DCASS_USE_STATIC_LIBS=ON -DCMAKE_BUILD_TYPE=Release -DOPENSSL_VERSION=$(OPENSSL_WIN_VERSION)
+STATIC_DRIVER_COPY_TARGET := scylladb_static.lib_copy
+else
+STATIC_DRIVER_COPY_TARGET := libscylladb_static.a_copy
+endif
+STATIC_DRIVER_BUILD_TARGETS := scylladb_staticlib_target $(STATIC_DRIVER_COPY_TARGET)
+
+define build-static-windows-targets
 	@pwsh -NoProfile -Command "\
 		$$useExternalOpenSSL = ((Select-String -Path 'build-static\\CMakeCache.txt' -Pattern '^SCYLLA_OPENSSL_EXTERNAL_PROJECT:BOOL=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
 		$$externalOpenSSLTarget = ((Select-String -Path 'build-static\\CMakeCache.txt' -Pattern '^SCYLLA_OPENSSL_EXTERNAL_TARGET:STRING=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
@@ -355,15 +360,35 @@ ifeq ($(OS_TYPE),windows)
 				$$env:OPENSSL_LIBS = \"$$opensslSslLibName`:`$$opensslCryptoLibName\"; \
 			} \
 		}; \
-		cmake --build build-static --config Release; \
+		cmake --build build-static --config Release --target $(1); \
 		if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE } \
 	"
+endef
+
+.configure-static-build-dir:
+ifeq ($(OS_TYPE),windows)
+	$(MAKE) .package-build-prepare-windows
+	cmake -S . -B build-static -G "Visual Studio 17 2022" -A x64 $(STATIC_BUILD_CMAKE_FLAGS) -DOPENSSL_VERSION=$(OPENSSL_WIN_VERSION)
+else
+	@mkdir "${STATIC_BUILD_DIR}" >/dev/null 2>&1 || true
+	cmake -S . -B "${STATIC_BUILD_DIR}" $(STATIC_BUILD_CMAKE_FLAGS)
+endif
+
+build-static-driver: .configure-static-build-dir
+ifeq ($(OS_TYPE),windows)
+	$(call build-static-windows-targets,$(STATIC_DRIVER_BUILD_TARGETS))
+else
+	@echo "Building static driver artifacts in ${STATIC_BUILD_DIR}"
+	cmake --build "${STATIC_BUILD_DIR}" --target $(STATIC_DRIVER_BUILD_TARGETS)
+endif
+
+build-static-integration-test-bin: build-static-driver
+ifeq ($(OS_TYPE),windows)
+	$(call build-static-windows-targets,$(STATIC_INTEGRATION_TEST_TARGET))
 	build-static\Release\cassandra-integration-tests.exe --gtest_list_tests > NUL
 else
 	@echo "Building integration test binary with STATIC linking to ${STATIC_BUILD_DIR}"
-	@mkdir "${STATIC_BUILD_DIR}" >/dev/null 2>&1 || true
-	@cd "${STATIC_BUILD_DIR}"
-	cmake -DCASS_BUILD_INTEGRATION_TESTS=ON -DCASS_USE_STATIC_LIBS=ON -DCMAKE_BUILD_TYPE=Release .. && (make -j 4 || make)
+	cmake --build "${STATIC_BUILD_DIR}" --target $(STATIC_INTEGRATION_TEST_TARGET)
 	"${STATIC_BUILD_DIR}/cassandra-integration-tests" --gtest_list_tests > /dev/null
 endif
 
