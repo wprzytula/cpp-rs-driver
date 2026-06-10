@@ -214,7 +214,7 @@ else
 endif
 
 clean:
-	rm -rf "${BUILD_DIR}"
+	rm -rf "${BUILD_DIR}" "${STATIC_BUILD_DIR}"
 
 update-apt-cache-if-needed:
 	@# It searches for a file that is at most one day old.
@@ -317,6 +317,55 @@ verify-openssl-3.0-compat:
 	@echo "=== OpenSSL 3.0 compatibility verified ==="
 	rm -rf "$(OPENSSL_3_0_COMPAT_SYSROOT)" \
 		"$(OPENSSL_3_0_LIBSSL_DEV_PATH)" /tmp/openssl-3.0-compat-link-test
+
+STATIC_BUILD_DIR := $(CURRENT_DIR)build-static
+
+build-static-integration-test-bin:
+ifeq ($(OS_TYPE),windows)
+	$(MAKE) .package-build-prepare-windows
+	cmake -S . -B build-static -G "Visual Studio 17 2022" -A x64 -DCASS_BUILD_INTEGRATION_TESTS=ON -DCASS_USE_STATIC_LIBS=ON -DCMAKE_BUILD_TYPE=Release -DOPENSSL_VERSION=$(OPENSSL_WIN_VERSION)
+	@pwsh -NoProfile -Command "\
+		$$useExternalOpenSSL = ((Select-String -Path 'build-static\\CMakeCache.txt' -Pattern '^SCYLLA_OPENSSL_EXTERNAL_PROJECT:BOOL=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
+		$$externalOpenSSLTarget = ((Select-String -Path 'build-static\\CMakeCache.txt' -Pattern '^SCYLLA_OPENSSL_EXTERNAL_TARGET:STRING=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
+		if ($$useExternalOpenSSL -eq 'ON' -and $$externalOpenSSLTarget) { \
+			cmake --build build-static --config Release --target $$externalOpenSSLTarget; \
+			if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE } \
+		}; \
+		$$opensslIncDir = ((Select-String -Path 'build-static\\CMakeCache.txt' -Pattern '^OPENSSL_INCLUDE_DIR:PATH=' | Select-Object -First 1).Line -split '=', 2)[1]; \
+		$$opensslSslLibPath = ((Select-String -Path 'build-static\\CMakeCache.txt' -Pattern '^OPENSSL_SSL_LIBRARY(_RELEASE)?:FILEPATH=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
+		$$opensslCryptoLibPath = ((Select-String -Path 'build-static\\CMakeCache.txt' -Pattern '^OPENSSL_CRYPTO_LIBRARY(_RELEASE)?:FILEPATH=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
+		if ($$opensslIncDir) { \
+			$$env:OPENSSL_DIR = (Split-Path $$opensslIncDir -Parent); \
+			$$env:OPENSSL_INCLUDE_DIR = $$opensslIncDir; \
+			if (-not $$opensslSslLibPath) { \
+				$$opensslSslLibPath = (Get-ChildItem -Path $$env:OPENSSL_DIR -Recurse -Include 'libssl*.lib','ssleay32*.lib' -File -ErrorAction SilentlyContinue | Select-Object -First 1).FullName; \
+			} \
+			if (-not $$opensslCryptoLibPath) { \
+				$$opensslCryptoLibPath = (Get-ChildItem -Path $$env:OPENSSL_DIR -Recurse -Include 'libcrypto*.lib','libeay32*.lib' -File -ErrorAction SilentlyContinue | Select-Object -First 1).FullName; \
+			} \
+			$$opensslLibPath = if ($$opensslSslLibPath) { $$opensslSslLibPath } elseif ($$opensslCryptoLibPath) { $$opensslCryptoLibPath } else { '' }; \
+			if ($$opensslLibPath) { \
+				$$env:OPENSSL_LIB_DIR = Split-Path $$opensslLibPath -Parent; \
+			} else { \
+				$$env:OPENSSL_LIB_DIR = Join-Path $$env:OPENSSL_DIR 'lib'; \
+			} \
+			if ($$opensslSslLibPath -and $$opensslCryptoLibPath) { \
+				$$opensslSslLibName = [System.IO.Path]::GetFileNameWithoutExtension($$opensslSslLibPath); \
+				$$opensslCryptoLibName = [System.IO.Path]::GetFileNameWithoutExtension($$opensslCryptoLibPath); \
+				$$env:OPENSSL_LIBS = \"$$opensslSslLibName`:`$$opensslCryptoLibName\"; \
+			} \
+		}; \
+		cmake --build build-static --config Release; \
+		if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE } \
+	"
+	build-static\Release\cassandra-integration-tests.exe --gtest_list_tests > NUL
+else
+	@echo "Building integration test binary with STATIC linking to ${STATIC_BUILD_DIR}"
+	@mkdir "${STATIC_BUILD_DIR}" >/dev/null 2>&1 || true
+	@cd "${STATIC_BUILD_DIR}"
+	cmake -DCASS_BUILD_INTEGRATION_TESTS=ON -DCASS_USE_STATIC_LIBS=ON -DCMAKE_BUILD_TYPE=Release .. && (make -j 4 || make)
+	"${STATIC_BUILD_DIR}/cassandra-integration-tests" --gtest_list_tests > /dev/null
+endif
 
 build-examples:
 	@echo "Building examples to ${EXAMPLES_DIR}"
