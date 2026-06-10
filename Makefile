@@ -396,7 +396,40 @@ endif
 
 build-driver: .package-configure
 ifeq ($(OS_TYPE),windows)
-	@pwsh -NoProfile -Command "$$opensslVersion = ((Select-String -Path 'build\\CMakeCache.txt' -Pattern '^OPENSSL_VERSION:STRING=' | Select-Object -First 1).Line -split '=', 2)[1]; $$opensslTarget = \"openssl-$${opensslVersion}-library\"; cmake --build build --config $(CMAKE_BUILD_TYPE) --target $$opensslTarget; $$env:OPENSSL_DIR = (Resolve-Path 'build\\libs\\openssl').Path; $$env:OPENSSL_INCLUDE_DIR = \"$$env:OPENSSL_DIR\\include\"; $$env:OPENSSL_LIB_DIR = \"$$env:OPENSSL_DIR\\lib\"; cmake --build build --config $(CMAKE_BUILD_TYPE)"
+	@pwsh -NoProfile -Command "\
+		$$useExternalOpenSSL = ((Select-String -Path 'build\\CMakeCache.txt' -Pattern '^SCYLLA_OPENSSL_EXTERNAL_PROJECT:BOOL=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
+		$$externalOpenSSLTarget = ((Select-String -Path 'build\\CMakeCache.txt' -Pattern '^SCYLLA_OPENSSL_EXTERNAL_TARGET:STRING=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
+		if ($$useExternalOpenSSL -eq 'ON' -and $$externalOpenSSLTarget) { \
+			cmake --build build --config $(CMAKE_BUILD_TYPE) --target $$externalOpenSSLTarget; \
+			if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE } \
+		}; \
+		$$opensslIncDir = ((Select-String -Path 'build\\CMakeCache.txt' -Pattern '^OPENSSL_INCLUDE_DIR:PATH=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
+		$$opensslSslLibPath = ((Select-String -Path 'build\\CMakeCache.txt' -Pattern '^OPENSSL_SSL_LIBRARY(_RELEASE)?:FILEPATH=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
+		$$opensslCryptoLibPath = ((Select-String -Path 'build\\CMakeCache.txt' -Pattern '^OPENSSL_CRYPTO_LIBRARY(_RELEASE)?:FILEPATH=' -ErrorAction SilentlyContinue | Select-Object -First 1).Line -split '=', 2)[1]; \
+		if ($$opensslIncDir) { \
+			$$env:OPENSSL_DIR = (Split-Path $$opensslIncDir -Parent); \
+			$$env:OPENSSL_INCLUDE_DIR = $$opensslIncDir; \
+			if (-not $$opensslSslLibPath) { \
+				$$opensslSslLibPath = (Get-ChildItem -Path $$env:OPENSSL_DIR -Recurse -Include 'libssl*.lib','ssleay32*.lib' -File -ErrorAction SilentlyContinue | Select-Object -First 1).FullName; \
+			} \
+			if (-not $$opensslCryptoLibPath) { \
+				$$opensslCryptoLibPath = (Get-ChildItem -Path $$env:OPENSSL_DIR -Recurse -Include 'libcrypto*.lib','libeay32*.lib' -File -ErrorAction SilentlyContinue | Select-Object -First 1).FullName; \
+			} \
+			$$opensslLibPath = if ($$opensslSslLibPath) { $$opensslSslLibPath } elseif ($$opensslCryptoLibPath) { $$opensslCryptoLibPath } else { '' }; \
+			if ($$opensslLibPath) { \
+				$$env:OPENSSL_LIB_DIR = Split-Path $$opensslLibPath -Parent; \
+			} else { \
+				$$env:OPENSSL_LIB_DIR = Join-Path $$env:OPENSSL_DIR 'lib'; \
+			} \
+			if ($$opensslSslLibPath -and $$opensslCryptoLibPath) { \
+				$$opensslSslLibName = [System.IO.Path]::GetFileNameWithoutExtension($$opensslSslLibPath); \
+				$$opensslCryptoLibName = [System.IO.Path]::GetFileNameWithoutExtension($$opensslCryptoLibPath); \
+				$$env:OPENSSL_LIBS = \"$$opensslSslLibName`:`$$opensslCryptoLibName\"; \
+			} \
+		}; \
+		cmake --build build --config $(CMAKE_BUILD_TYPE); \
+		if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE } \
+	"
 else
 	cmake --build build --config $(CMAKE_BUILD_TYPE)
 endif
