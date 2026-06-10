@@ -84,3 +84,6 @@ set_target_properties(cassandra-integration-tests PROPERTIES
 if(LIBSSH2_LIBRARY_NAME) # Handle ExternalProject dependency
   add_dependencies(cassandra-integration-tests ${LIBSSH2_LIBRARY_NAME})
 endif()
+if(LIBUV_LIBRARY_NAME) # Handle ExternalProject dependency
+  add_dependencies(cassandra-integration-tests ${LIBUV_LIBRARY_NAME})
+endif()
