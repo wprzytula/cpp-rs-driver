@@ -6,6 +6,7 @@ use crate::cql_types::data_type::get_column_type;
 use crate::cql_types::uuid::CassUuid;
 use crate::exec_profile::{CassExecProfile, ExecProfileName, PerStatementExecProfile};
 use crate::future::{CassFuture, CassFutureResult, CassResultValue};
+use crate::logging::init_logging;
 use crate::metadata::create_table_metadata;
 use crate::metadata::{CassKeyspaceMeta, CassMaterializedViewMeta, CassSchemaMeta};
 use crate::query_result::{CassResult, CassResultKind};
@@ -227,6 +228,8 @@ impl FFI for CassSession {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cass_session_new() -> CassOwnedSharedPtr<CassSession, CMut> {
+    init_logging();
+
     let session = Arc::new(RwLock::new(CassSessionInner {
         connected: None,
         client_id: uuid::Uuid::new_v4(),

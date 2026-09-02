@@ -236,6 +236,8 @@ pub unsafe extern "C" fn cass_log_level_string(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cass_log_set_callback(callback: CassLogCallback, data: *mut c_void) {
+    init_logging();
+
     let logger = Logger {
         cb: Some(callback.unwrap_or(noop_log_callback)),
         data,

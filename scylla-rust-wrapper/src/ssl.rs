@@ -4,6 +4,7 @@ use crate::argconv::{
 };
 use crate::cass_error::CassError;
 use crate::cass_ssl_types::CassSslVerifyFlags;
+use crate::logging::init_logging;
 use crate::types::size_t;
 use libc::{c_int, strlen};
 use openssl::ssl::SslVerifyMode;
@@ -46,6 +47,8 @@ pub unsafe extern "C" fn cass_ssl_new() -> CassOwnedSharedPtr<CassSsl, CMut> {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cass_ssl_new_no_lib_init() -> CassOwnedSharedPtr<CassSsl, CMut> {
+    init_logging();
+
     let ssl_context: *mut SSL_CTX = unsafe { SSL_CTX_new(TLS_method()) };
     let trusted_store: *mut X509_STORE = unsafe { X509_STORE_new() };
 
