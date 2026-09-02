@@ -12,6 +12,7 @@ use tracing::Level;
 use tracing::debug;
 use tracing::field::Field;
 use tracing_subscriber::Layer;
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::prelude::*;
 
@@ -158,10 +159,7 @@ where
 pub(crate) fn set_tracing_subscriber_with_level(level: Level) {
     tracing::subscriber::set_global_default(
         tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::from_default_env()
-                    .add_directive(level.to_owned().into()),
-            )
+            .with(LevelFilter::from_level(level))
             .with(CustomLayer),
     )
     .unwrap_or(()) // Ignore if it is set already
