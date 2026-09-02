@@ -7,6 +7,7 @@ use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::fmt::Write;
 use std::os::raw::{c_char, c_void};
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::Level;
 use tracing::debug;
@@ -15,6 +16,7 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::reload;
 
 impl FFI for CassLogMessage {
     type Origin = FromRef;
@@ -154,28 +156,63 @@ where
     }
 }
 
-// Sets tracing subscriber with specified `level`.
-// The subscriber is valid for the duration of the entire program.
-pub(crate) fn set_tracing_subscriber_with_level(level: Level) {
+/// The log level that the driver starts with, before the user calls
+/// [`cass_log_set_level`]. It matches the cpp-driver's default.
+const DEFAULT_LOG_LEVEL: Level = Level::WARN;
+
+/// A handle that allows mutating the level of the filter of the tracing
+/// subscriber installed by the driver.
+type LogLevelHandle = reload::Handle<LevelFilter, tracing_subscriber::Registry>;
+
+/// Installs the driver's global tracing subscriber upon first access,
+/// and yields the handle used to mutate its log level later on.
+///
+/// The handle is `None` if some other tracing subscriber was already installed
+/// globally - be it by the application that embeds the driver, or by the
+/// driver's own unit tests. In such case the driver does not own the logging
+/// configuration, and thus must not (and cannot) change the log level.
+static LOG_LEVEL_HANDLE: LazyLock<Option<LogLevelHandle>> = LazyLock::new(|| {
+    let (filter, handle) = reload::Layer::new(LevelFilter::from_level(DEFAULT_LOG_LEVEL));
+
     tracing::subscriber::set_global_default(
         tracing_subscriber::registry()
-            .with(LevelFilter::from_level(level))
+            .with(filter)
             .with(CustomLayer),
     )
-    .unwrap_or(()) // Ignore if it is set already
+    .ok()
+    .map(|()| handle)
+});
+
+/// Makes sure that the driver's tracing subscriber is installed.
+///
+/// This is idempotent and cheap (an atomic load after the first call), so it
+/// can be called from any entry point that could be the first one that the
+/// application calls.
+pub(crate) fn init_logging() {
+    LazyLock::force(&LOG_LEVEL_HANDLE);
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cass_log_set_level(log_level: CassLogLevel) {
+    init_logging();
+
     if log_level == CassLogLevel::CASS_LOG_DISABLED {
         debug!("Logging is disabled!");
         return;
     }
 
-    let level = Level::try_from(log_level).unwrap_or(Level::WARN);
+    let level = Level::try_from(log_level).unwrap_or(DEFAULT_LOG_LEVEL);
 
-    // Sets the tracing subscriber with new log level.
-    set_tracing_subscriber_with_level(level);
+    let Some(handle) = LOG_LEVEL_HANDLE.as_ref() else {
+        // Some other tracing subscriber is installed globally. Not ours to reconfigure.
+        return;
+    };
+
+    // The only possible error is a poisoned lock inside the handle, which can
+    // only happen if a previous `modify` panicked. Nothing we can do about it.
+    let _ = handle.modify(|filter| *filter = LevelFilter::from_level(level));
+
+    // Emitted after the update, so that it appears iff the new level admits it.
     debug!("Log level is set to {}", level);
 }
 
