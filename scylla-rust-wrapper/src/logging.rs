@@ -73,6 +73,19 @@ impl TryFrom<CassLogLevel> for Level {
     }
 }
 
+impl TryFrom<CassLogLevel> for LevelFilter {
+    type Error = ();
+
+    fn try_from(log_level: CassLogLevel) -> Result<Self, Self::Error> {
+        match log_level {
+            // `CASS_LOG_DISABLED` has no `Level` counterpart - disabling logging
+            // is expressed as a filter that admits nothing.
+            CassLogLevel::CASS_LOG_DISABLED => Ok(LevelFilter::OFF),
+            other => Level::try_from(other).map(LevelFilter::from),
+        }
+    }
+}
+
 pub(crate) const CASS_LOG_MAX_MESSAGE_SIZE: usize = 1024;
 
 pub(crate) unsafe extern "C" fn stderr_log_callback(
@@ -158,7 +171,7 @@ where
 
 /// The log level that the driver starts with, before the user calls
 /// [`cass_log_set_level`]. It matches the cpp-driver's default.
-const DEFAULT_LOG_LEVEL: Level = Level::WARN;
+const DEFAULT_LOG_LEVEL_FILTER: LevelFilter = LevelFilter::WARN;
 
 /// A handle that allows mutating the level of the filter of the tracing
 /// subscriber installed by the driver.
@@ -172,7 +185,7 @@ type LogLevelHandle = reload::Handle<LevelFilter, tracing_subscriber::Registry>;
 /// driver's own unit tests. In such case the driver does not own the logging
 /// configuration, and thus must not (and cannot) change the log level.
 static LOG_LEVEL_HANDLE: LazyLock<Option<LogLevelHandle>> = LazyLock::new(|| {
-    let (filter, handle) = reload::Layer::new(LevelFilter::from_level(DEFAULT_LOG_LEVEL));
+    let (filter, handle) = reload::Layer::new(DEFAULT_LOG_LEVEL_FILTER);
 
     tracing::subscriber::set_global_default(
         tracing_subscriber::registry()
@@ -196,24 +209,24 @@ pub(crate) fn init_logging() {
 pub unsafe extern "C" fn cass_log_set_level(log_level: CassLogLevel) {
     init_logging();
 
-    if log_level == CassLogLevel::CASS_LOG_DISABLED {
-        debug!("Logging is disabled!");
-        return;
-    }
-
-    let level = Level::try_from(log_level).unwrap_or(DEFAULT_LOG_LEVEL);
+    let filter = LevelFilter::try_from(log_level).unwrap_or(DEFAULT_LOG_LEVEL_FILTER);
 
     let Some(handle) = LOG_LEVEL_HANDLE.as_ref() else {
         // Some other tracing subscriber is installed globally. Not ours to reconfigure.
         return;
     };
 
+    if filter == LevelFilter::OFF {
+        // Emitted before the update, so that it is not filtered out by it.
+        debug!("Logging is disabled!");
+    }
+
     // The only possible error is a poisoned lock inside the handle, which can
     // only happen if a previous `modify` panicked. Nothing we can do about it.
-    let _ = handle.modify(|filter| *filter = LevelFilter::from_level(level));
+    let _ = handle.modify(|f| *f = filter);
 
     // Emitted after the update, so that it appears iff the new level admits it.
-    debug!("Log level is set to {}", level);
+    debug!("Log level is set to {}", filter);
 }
 
 #[unsafe(no_mangle)]
