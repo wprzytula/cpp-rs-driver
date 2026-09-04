@@ -271,3 +271,101 @@ pub unsafe extern "C" fn cass_log_get_callback_and_data(
         *data_out = logger.data;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::os::raw::c_void;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use rusty_fork::rusty_fork_test;
+    use tracing::{error, info, warn};
+
+    use crate::argconv::{CConst, CassBorrowedSharedPtr};
+    use crate::cass_log_types::{CassLogLevel, CassLogMessage};
+
+    use super::{cass_log_set_callback, cass_log_set_level};
+
+    /// Counts the log events that made it through the driver's filter
+    /// to the user-provided log callback.
+    #[derive(Default)]
+    struct EventCounter(AtomicUsize);
+
+    impl EventCounter {
+        /// Returns the number of events captured since the previous call.
+        fn take(&self) -> usize {
+            self.0.swap(0, Ordering::SeqCst)
+        }
+    }
+
+    unsafe extern "C" fn counting_log_callback(
+        _message: CassBorrowedSharedPtr<CassLogMessage, CConst>,
+        data: *mut c_void,
+    ) {
+        let counter = unsafe { &*(data as *const EventCounter) };
+        counter.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    rusty_fork_test! {
+        #[test]
+        /// Verifies that the log level can be set at any point of the driver's
+        /// lifetime, any number of times.
+        ///
+        /// This is run with rusty_fork in order to have a fresh process. The
+        /// tracing subscriber is global and can only be installed once, so the
+        /// test must neither share a process with other tests (which install
+        /// their own subscriber via `setup_tracing`) nor with another run of
+        /// itself. For the same reason the test must not call `setup_tracing`.
+        fn log_level_is_mutable() {
+            let counter = EventCounter::default();
+            let data = std::ptr::from_ref(&counter).cast::<c_void>().cast_mut();
+
+            // Each of these emits from a single tracing callsite, no matter how
+            // many times it is called. Reusing them across log level changes is
+            // what makes this test cover the invalidation of tracing's interest
+            // cache, which memoizes per-callsite whether anyone is interested
+            // in its events.
+            let emit_info = || info!("An INFO event");
+            let emit_warn = || warn!("A WARN event");
+            let emit_error = || error!("An ERROR event");
+
+            // An event emitted before any `cass_log_set_level` call already
+            // reaches the callback, at the default (WARN) level...
+            unsafe { cass_log_set_callback(Some(counting_log_callback), data) };
+            emit_warn();
+            assert_eq!(counter.take(), 1);
+
+            // ...and one below that level does not.
+            emit_info();
+            assert_eq!(counter.take(), 0);
+
+            // Lowering the level admits more events, including from callsites
+            // whose events were already filtered out above.
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_TRACE) };
+            counter.take(); // Discard the driver's own log about the change.
+            emit_info();
+            assert_eq!(counter.take(), 1);
+
+            // Raising it filters them out again - the level is mutable both
+            // ways, also for callsites that were admitted a moment ago.
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_ERROR) };
+            counter.take();
+            emit_info();
+            emit_warn();
+            assert_eq!(counter.take(), 0);
+            emit_error();
+            assert_eq!(counter.take(), 1);
+
+            // Logging can be disabled entirely...
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_DISABLED) };
+            counter.take();
+            emit_error();
+            assert_eq!(counter.take(), 0);
+
+            // ...and enabled back again.
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_WARN) };
+            counter.take();
+            emit_warn();
+            assert_eq!(counter.take(), 1);
+        }
+    }
+}
