@@ -10296,9 +10296,6 @@ cass_error_desc(CassError error);
  *
  * @ingroup Logging
  *
- * <b>Note:</b> This needs to be done before any call that might log, such as
- * any of the cass_cluster_*() or cass_ssl_*() functions.
- *
  * <b>Default:</b> CASS_LOG_WARN
  *
  * @param[in] log_level
