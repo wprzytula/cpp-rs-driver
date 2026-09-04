@@ -16,13 +16,18 @@
 
 #include "integration.hpp"
 
+#include <atomic>
+
 class LoggingTests : public Integration {
 public:
   LoggingTests() { is_ccm_requested_ = false; }
 
+  // The driver emits log events from its own background threads, so the flag
+  // is atomic - both the write here and the read done by the assertion in the
+  // test body can race with those threads.
   static void log(const CassLogMessage* log, void* data) {
-    bool* is_triggered = static_cast<bool*>(data);
-    *is_triggered = true;
+    std::atomic<bool>* is_triggered = static_cast<std::atomic<bool>*>(data);
+    is_triggered->store(true);
   }
 };
 
@@ -32,10 +37,10 @@ public:
 CASSANDRA_INTEGRATION_TEST_F(LoggingTests, Callback) {
   CHECK_FAILURE;
 
-  bool is_triggered = false;
+  std::atomic<bool> is_triggered(false);
   cass_log_set_callback(LoggingTests::log, &is_triggered);
   // This will emit a log event in on debug level which will trigger the `log` callback.
   cass_log_set_level(CASS_LOG_DEBUG);
   default_cluster().connect("", false);
-  EXPECT_TRUE(is_triggered);
+  EXPECT_TRUE(is_triggered.load());
 }
