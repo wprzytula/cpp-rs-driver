@@ -124,7 +124,7 @@ CassError select_from_basic(CassSession* session, const char* key, Basic* basic)
   CassStatement* statement = NULL;
   CassFuture* future = NULL;
 
-  const char* query = "SELECT * FROM examples.basic WHERE key = ?";
+  const char* query = "SELECT * FROM examples.basic WHERE key = :key";
 
   statement = cass_statement_new(query, 1);
 

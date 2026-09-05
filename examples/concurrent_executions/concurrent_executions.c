@@ -86,7 +86,8 @@ CassError execute_query(CassSession* session, const char* query) {
 
 CassError prepare_insert(CassSession* session, const CassPrepared** prepared) {
   CassError rc = CASS_OK;
-  const char* query = "INSERT INTO examples.concurrent_executions (id, value) VALUES (?, ?);";
+  const char* query =
+      "INSERT INTO examples.concurrent_executions (id, value) VALUES (:id, :value);";
 
   CassFuture* future = cass_session_prepare(session, query);
   cass_future_wait(future);

@@ -186,8 +186,9 @@ int main(int argc, char* argv[]) {
   char* hosts = "127.0.0.1";
 
   const char* insert_query =
-      "INSERT INTO examples.basic (key, bln, flt, dbl, i32, i64) VALUES (?, ?, ?, ?, ?, ?);";
-  const char* select_query = "SELECT * FROM examples.basic WHERE key = ?";
+      "INSERT INTO examples.basic (key, bln, flt, dbl, i32, i64) "
+      "VALUES (:key, :bln, :flt, :dbl, :i32, :i64);";
+  const char* select_query = "SELECT * FROM examples.basic WHERE key = :key";
 
   if (argc > 1) {
     hosts = argv[1];
