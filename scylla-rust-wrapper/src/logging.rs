@@ -278,7 +278,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use rusty_fork::rusty_fork_test;
-    use tracing::{error, info, warn};
+    use tracing::{error, info, trace_span, warn};
 
     use crate::argconv::{CConst, CassBorrowedSharedPtr};
     use crate::cass_log_types::{CassLogLevel, CassLogMessage};
@@ -366,6 +366,39 @@ mod tests {
             counter.take();
             emit_warn();
             assert_eq!(counter.take(), 1);
+        }
+
+        #[test]
+        /// Verifies that the enabledness of a newly created span follows the
+        /// current log level.
+        ///
+        /// The Rust driver relies on this to skip costly work: it creates a
+        /// fresh `trace_span!` per request (`RequestSpan` in the driver's
+        /// `observability/driver_tracing.rs`) and builds the replica listing
+        /// for that request only `if !span.span().is_disabled()` (in the
+        /// driver's `client/session.rs`). Were span enabledness not to follow
+        /// the log level, lowering the level at runtime would not make the
+        /// driver start collecting that information.
+        ///
+        /// Run with rusty_fork for the same reason as
+        /// `log_level_is_mutable` - see the comment there.
+        fn span_enabledness_follows_log_level() {
+            // A single callsite, called repeatedly - just like the driver,
+            // which creates all its request spans from a handful of callsites.
+            let make_request_span = || trace_span!("Request");
+
+            // The default level (WARN) does not admit a TRACE span, so the
+            // driver skips building the replica listing.
+            assert!(make_request_span().is_disabled());
+
+            // Lowering the level enables the spans created from now on, so new
+            // requests do collect the replica listing.
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_TRACE) };
+            assert!(!make_request_span().is_disabled());
+
+            // Raising it back makes the driver skip that work again.
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_ERROR) };
+            assert!(make_request_span().is_disabled());
         }
     }
 }
