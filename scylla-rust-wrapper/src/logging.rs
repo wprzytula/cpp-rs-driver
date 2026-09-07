@@ -400,5 +400,77 @@ mod tests {
             unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_ERROR) };
             assert!(make_request_span().is_disabled());
         }
+
+        #[test]
+        /// Verifies that log events follow the current log level even when they
+        /// are emitted from inside a span that was created before the level
+        /// changed - possibly while that span was disabled.
+        ///
+        /// This is what makes the logs of the driver's long-running tasks
+        /// (the per-connection router, the connection pool refiller, the
+        /// cluster and metadata workers) react to a level change. Those tasks
+        /// are not instrumented with any span at all, and all their events are
+        /// plain callsites, so both cases covered here apply to them.
+        ///
+        /// The enabledness of a span, on the other hand, is fixed when the span
+        /// is constructed and never re-evaluated - this test asserts that too,
+        /// in both directions, so that the limitation is documented rather than
+        /// assumed. It does not affect the driver, whose spans never outlive a
+        /// single request, but it does mean that span *fields* recorded on a
+        /// long-lived span (and any work guarded by its enabledness) would not
+        /// react to a level change.
+        ///
+        /// Run with rusty_fork for the same reason as
+        /// `log_level_is_mutable` - see the comment there.
+        fn long_lived_spans_do_not_freeze_the_log_level() {
+            let counter = EventCounter::default();
+            let data = std::ptr::from_ref(&counter).cast::<c_void>().cast_mut();
+            unsafe { cass_log_set_callback(Some(counting_log_callback), data) };
+
+            let make_span = || trace_span!("Long-running task");
+            let emit_info = || info!("An INFO event");
+
+            // Created at the default (WARN) level, so the span is disabled.
+            let long_lived = make_span();
+            assert!(long_lived.is_disabled());
+
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_TRACE) };
+            counter.take(); // Discard the driver's own log about the change.
+
+            // An event emitted from inside that disabled span is admitted, as
+            // its enabledness depends on the event's own callsite and the
+            // current level only.
+            {
+                let _guard = long_lived.enter();
+                emit_info();
+                assert_eq!(counter.take(), 1);
+            }
+
+            // The same holds with no span in scope at all, which is how the
+            // driver's long-running tasks emit their events.
+            emit_info();
+            assert_eq!(counter.take(), 1);
+
+            // Raising the level silences them again, still inside that span.
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_ERROR) };
+            counter.take();
+            {
+                let _guard = long_lived.enter();
+                emit_info();
+                assert_eq!(counter.take(), 0);
+            }
+
+            // The span itself, however, keeps the enabledness it was created
+            // with. It was created while disabled, and stays disabled even
+            // though TRACE was enabled in between.
+            assert!(long_lived.is_disabled());
+
+            // And the other way around: a span created while enabled stays
+            // enabled after the level is raised.
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_TRACE) };
+            let created_while_enabled = make_span();
+            unsafe { cass_log_set_level(CassLogLevel::CASS_LOG_ERROR) };
+            assert!(!created_while_enabled.is_disabled());
+        }
     }
 }
