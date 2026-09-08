@@ -11,6 +11,7 @@ use crate::host_listener::CCallbackBasedHostListener;
 use crate::load_balancing::{
     CassHostFilter, DcRestriction, LoadBalancingConfig, LoadBalancingKind,
 };
+use crate::logging::init_logging;
 use crate::retry_policy::CassRetryPolicy;
 use crate::runtime::{RUNTIMES, Runtime};
 use crate::ssl::CassSsl;
@@ -220,6 +221,8 @@ impl CassCluster {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cass_cluster_new() -> CassOwnedExclusivePtr<CassCluster, CMut> {
+    init_logging();
+
     let default_execution_profile_builder = ExecutionProfileBuilder::default()
         .consistency(DEFAULT_CONSISTENCY)
         .serial_consistency(DEFAULT_SERIAL_CONSISTENCY)
