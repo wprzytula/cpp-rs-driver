@@ -2,11 +2,13 @@
 
 The driver's logging system uses `stderr` by default and the log level `CASS_LOG_WARN`. Both of these settings can be changed using the driver's `cass_log_*()` configuration functions.
 
-Logging can be configured at any point of the driver's lifetime, any number of times. Note, though, that events emitted before a custom logging callback is installed are handled by the default one, i.e. printed to `stderr`.
+**Important**: Only setting the log level before any other interaction with the driver's API is fully supported. Support for altering the log level during the driver's operation is experimental, might misbehave (by displaying more or fewer logs than expected), and may be removed in the future.
 
 ## Log Level
 
-To update the log level use `cass_log_set_level()`. It may be called at any time, and as many times as needed - the new level applies to all events emitted afterwards. Pass `CASS_LOG_DISABLED` to silence the driver completely.
+To update the log level use `cass_log_set_level()`. Pass `CASS_LOG_DISABLED` to silence the driver completely.
+
+Set the level once, before calling any other driver function. Setting it later, or more than once, is experimental - see the notice above. Note also that events emitted before a custom logging callback is installed are handled by the default one, i.e. printed to `stderr`.
 
 ```c
 cass_log_set_level(CASS_LOG_INFO);

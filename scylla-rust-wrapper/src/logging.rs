@@ -205,6 +205,12 @@ pub(crate) fn init_logging() {
     LazyLock::force(&LOG_LEVEL_HANDLE);
 }
 
+/// Sets the log level.
+///
+/// Only setting the log level before any other interaction with the driver's
+/// API is fully supported. Support for altering the log level during the
+/// driver's operation is experimental, might misbehave (by displaying more or
+/// fewer logs than expected), and may be removed in the future.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cass_log_set_level(log_level: CassLogLevel) {
     init_logging();

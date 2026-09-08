@@ -10296,6 +10296,12 @@ cass_error_desc(CassError error);
  *
  * @ingroup Logging
  *
+ * <b>Note:</b> Only setting the log level before any other interaction with
+ * the driver's API is fully supported. Support for altering the log level
+ * during the driver's operation is experimental, might misbehave (by
+ * displaying more or fewer logs than expected), and may be removed in the
+ * future.
+ *
  * <b>Default:</b> CASS_LOG_WARN
  *
  * @param[in] log_level
