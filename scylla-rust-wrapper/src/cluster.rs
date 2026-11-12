@@ -1789,6 +1789,21 @@ pub unsafe extern "C" fn cass_cluster_set_metadata_request_serverside_timeout(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn cass_cluster_set_driver_config_reporting(
+    cluster_raw: CassBorrowedExclusivePtr<CassCluster, CMut>,
+    enabled: cass_bool_t,
+) {
+    let Some(cluster) = BoxFFI::as_mut_ref(cluster_raw) else {
+        tracing::error!(
+            "Provided null cluster pointer to cass_cluster_set_driver_config_reporting!"
+        );
+        return;
+    };
+
+    cluster.session_builder.config.driver_config_reporting = enabled != 0;
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cass_cluster_set_host_listener_callback(
     cluster_raw: CassBorrowedExclusivePtr<CassCluster, CMut>,
     callback: CassHostListenerCallback,
@@ -2585,6 +2600,36 @@ mod tests {
             }
 
             cass_execution_profile_free(exec_profile_raw);
+            cass_cluster_free(cluster_raw);
+        }
+    }
+
+    #[test]
+    #[ntest::timeout(100)]
+    fn test_driver_config_reporting() {
+        unsafe {
+            let mut cluster_raw = cass_cluster_new();
+
+            let is_enabled = |cluster_raw: &CassOwnedExclusivePtr<CassCluster, CMut>| {
+                BoxFFI::as_ref(cluster_raw.borrow())
+                    .unwrap()
+                    .session_builder
+                    .config
+                    .driver_config_reporting
+            };
+
+            // The report is enabled by default.
+            assert!(is_enabled(&cluster_raw));
+
+            cass_cluster_set_driver_config_reporting(cluster_raw.borrow_mut(), cass_false);
+            assert!(!is_enabled(&cluster_raw));
+
+            cass_cluster_set_driver_config_reporting(cluster_raw.borrow_mut(), cass_true);
+            assert!(is_enabled(&cluster_raw));
+
+            // A null cluster pointer is ignored.
+            cass_cluster_set_driver_config_reporting(BoxFFI::null_mut(), cass_false);
+
             cass_cluster_free(cluster_raw);
         }
     }

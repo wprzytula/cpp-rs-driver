@@ -2920,6 +2920,33 @@ CASS_EXPORT void
 cass_cluster_set_metadata_request_serverside_timeout(CassCluster* cluster,
                              cass_duration_t timeout_ms);
 
+/**
+ * Enable/Disable the report of the driver configuration to the server.
+ *
+ * The control connection sends a JSON description of the effective
+ * configuration of the session in the DRIVER_CONFIG option of the STARTUP
+ * message. The description includes the timeouts, the connection pool
+ * settings, and the load balancing, retry and speculative execution policies.
+ * The server shows it in system.clients.client_options. All ScyllaDB drivers
+ * use the same schema for the description.
+ *
+ * Disable the report if the cluster must not get the configuration of the
+ * client. This has no effect on the other STARTUP options, for example the
+ * application name, the client ID and SESSION_ID. SESSION_ID is a UUID that
+ * the driver makes once for each session. It gives no information about the
+ * client.
+ *
+ * <b>Default:</b> cass_true (enabled).
+ *
+ * @public @memberof CassCluster
+ *
+ * @param[in] cluster
+ * @param[in] enabled
+ */
+CASS_EXPORT void
+cass_cluster_set_driver_config_reporting(CassCluster* cluster,
+                                         cass_bool_t enabled);
+
 
 
 /***********************************************************************************
