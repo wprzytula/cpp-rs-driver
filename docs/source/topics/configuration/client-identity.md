@@ -46,3 +46,46 @@ cass_session_free(session);
 
 **Note**: A session's unique identifier is constant for its lifetime and does
           not change when re-establishing connection to a cluster.
+
+## Driver Configuration Report
+
+The driver reports its configuration to the server. Thus, you can see the
+configuration of a client from the server side.
+
+The control connection sends a `DRIVER_CONFIG` option in the CQL STARTUP
+message. The value is a JSON description of the configuration that the session
+uses. The description includes:
+
+- the timeouts,
+- the connection pool settings,
+- the load balancing, retry and speculative execution policies.
+
+All ScyllaDB drivers use the same schema for the description.
+
+ScyllaDB shows the option in `system.clients.client_options`:
+
+```sql
+SELECT address, port, client_options FROM system.clients;
+```
+
+Each node shows only the connections to that node. Thus, to find the report,
+read `system.clients` on each node. Older ScyllaDB versions do not have the
+`client_options` column.
+
+The report is enabled by default. If the cluster must not get the configuration
+of the client, disable the report:
+
+```c
+CassCluster* cluster = cass_cluster_new();
+
+/* Do not send the driver configuration to the cluster */
+cass_cluster_set_driver_config_reporting(cluster, cass_false);
+
+/* ... */
+
+cass_cluster_free(cluster);
+```
+
+This has no effect on the other STARTUP options, for example the application
+name, the client ID and `SESSION_ID`. `SESSION_ID` is a UUID that the driver
+makes once for each session. It gives no information about the client.
